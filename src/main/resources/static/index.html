@@ -32,7 +32,7 @@
                     </div>
                     <p>Drag & drop a PDF here</p>
                     <p class="upload-hint">or click to browse files</p>
-                    <input type="file" id="fileInput" accept=".pdf" hidden>
+                    <input type="file" id="fileInput" accept=".pdf" multiple hidden>
                 </div>
                 <div class="upload-status" id="uploadStatus" hidden>
                     <div class="status-icon">
@@ -44,6 +44,10 @@
                         <span id="statusFileName"></span>
                         <small id="statusDetails"></small>
                     </div>
+                </div>
+                <div class="upload-progress" id="uploadProgress" hidden>
+                    <div class="progress-bar"><div class="progress-fill" id="progressFill"></div></div>
+                    <small class="progress-label" id="progressLabel">0 / 0</small>
                 </div>
             </div>
 

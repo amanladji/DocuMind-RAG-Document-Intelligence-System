@@ -219,6 +219,33 @@ body {
   display: block;
 }
 
+.upload-progress {
+  margin-top: var(--spacing-12);
+}
+
+.upload-progress .progress-bar {
+  height: 3px;
+  background: rgba(255,255,255,0.1);
+  border-radius: 2px;
+  overflow: hidden;
+}
+
+.upload-progress .progress-fill {
+  height: 100%;
+  width: 0%;
+  background: var(--color-signal-orange);
+  border-radius: 2px;
+  transition: width 0.3s ease;
+}
+
+.upload-progress .progress-label {
+  font-size: 10px;
+  letter-spacing: -0.2px;
+  color: rgba(255,255,255,0.3);
+  margin-top: 4px;
+  display: block;
+}
+
 /* ───── DOCUMENTS ───── */
 .documents-section {
   padding: var(--spacing-16) var(--spacing-20);
@@ -274,6 +301,25 @@ body {
   font-size: 11px;
   letter-spacing: -0.2px;
   color: rgba(255,255,255,0.3);
+}
+
+.doc-delete {
+  background: none;
+  border: none;
+  color: rgba(255,255,255,0.2);
+  cursor: pointer;
+  padding: 4px;
+  border-radius: var(--radius-md);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.2s;
+  flex-shrink: 0;
+}
+
+.doc-delete:hover {
+  color: var(--color-signal-orange);
+  background: rgba(239,111,46,0.1);
 }
 
 /* ───── USER SECTION ───── */

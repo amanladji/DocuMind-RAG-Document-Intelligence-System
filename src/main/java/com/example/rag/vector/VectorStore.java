@@ -9,4 +9,6 @@ public interface VectorStore {
     void upsert(List<DocumentChunk> chunks);
 
     List<SearchResult> search(String question, int topK);
+
+    void deleteByDocumentId(String documentId);
 }

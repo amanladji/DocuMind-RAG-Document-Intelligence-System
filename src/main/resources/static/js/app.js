@@ -9,6 +9,7 @@ const uploadZone = document.getElementById('uploadZone');
 const uploadStatus = document.getElementById('uploadStatus');
 const statusFileName = document.getElementById('statusFileName');
 const statusDetails = document.getElementById('statusDetails');
+const uploadProgress = document.getElementById('uploadProgress');
 const documentList = document.getElementById('documentList');
 const userName = document.getElementById('userName');
 const userAvatar = document.getElementById('userAvatar');
@@ -20,6 +21,32 @@ if (user) {
 }
 
 let documents = [];
+
+loadDocuments();
+
+async function loadDocuments() {
+    try {
+        const res = await authFetch('/api/documents');
+        if (!res.ok) return;
+        const docs = await res.json();
+        documentList.innerHTML = '';
+        if (docs.length === 0) {
+            documentList.innerHTML = '<p class="empty-state">No documents uploaded</p>';
+            documents = [];
+            return;
+        }
+        documents = docs;
+        docs.forEach(doc => addDocumentItem(doc));
+        enableChat();
+    } catch (e) {
+        // silently fail
+    }
+}
+
+function enableChat() {
+    questionInput.disabled = false;
+    sendBtn.disabled = false;
+}
 
 // Upload handlers
 uploadZone.addEventListener('click', () => fileInput.click());
@@ -36,68 +63,73 @@ uploadZone.addEventListener('dragleave', () => {
 uploadZone.addEventListener('drop', (e) => {
     e.preventDefault();
     uploadZone.classList.remove('dragover');
-    const files = e.dataTransfer.files;
-    if (files.length > 0) uploadFile(files[0]);
+    const files = Array.from(e.dataTransfer.files);
+    if (files.length > 0) uploadFiles(files);
 });
 
 fileInput.addEventListener('change', (e) => {
-    if (e.target.files.length > 0) uploadFile(e.target.files[0]);
+    const files = Array.from(e.target.files);
+    if (files.length > 0) uploadFiles(files);
 });
 
-async function uploadFile(file) {
-    if (!file.name.toLowerCase().endsWith('.pdf')) {
-        alert('Only PDF files are supported.');
-        return;
+async function uploadFiles(files) {
+    const pdfs = Array.from(files).filter(f => f.name.toLowerCase().endsWith('.pdf'));
+    if (pdfs.length !== Array.from(files).length) {
+        alert('Only PDF files are supported. Non-PDF files were skipped.');
     }
-
-    const formData = new FormData();
-    formData.append('file', file);
+    if (pdfs.length === 0) return;
 
     uploadStatus.hidden = true;
     const originalText = uploadZone.querySelector('p').textContent;
-    uploadZone.querySelector('p').textContent = 'Uploading...';
+    let completed = 0;
+    let hasError = false;
 
-    try {
-        const res = await authFetch('/upload', {
-            method: 'POST',
-            body: formData
-        });
+    for (const file of pdfs) {
+        uploadZone.querySelector('p').textContent = `Uploading ${file.name} (${completed + 1}/${pdfs.length})...`;
 
-        if (!res.ok) {
-            const err = await res.text();
-            throw new Error(err || 'Upload failed');
+        const formData = new FormData();
+        formData.append('file', file);
+
+        try {
+            const res = await authFetch('/upload', {
+                method: 'POST',
+                body: formData
+            });
+
+            if (!res.ok) {
+                const err = await res.text();
+                console.error(`${file.name}: ${err}`);
+                hasError = true;
+            } else {
+                const data = await res.json();
+                completed++;
+            }
+        } catch (err) {
+            console.error(`${file.name}: ${err.message}`);
+            hasError = true;
         }
+    }
 
-        const data = await res.json();
+    uploadZone.querySelector('p').textContent = originalText;
+    fileInput.value = '';
 
-        statusFileName.textContent = data.fileName;
-        statusDetails.textContent = `${data.chunksStored} chunk${data.chunksStored !== 1 ? 's' : ''} stored`;
+    if (completed > 0) {
+        statusFileName.textContent = `${completed} of ${pdfs.length} uploaded`;
+        statusDetails.textContent = `${completed} file${completed !== 1 ? 's' : ''} uploaded successfully`;
         uploadStatus.hidden = false;
-
-        addDocument(data.fileName, data.chunksStored);
-
-        if (documents.length === 1) {
-            questionInput.disabled = false;
-            sendBtn.disabled = false;
-            questionInput.focus();
-        }
-    } catch (err) {
-        alert('Upload failed: ' + err.message);
-    } finally {
-        uploadZone.querySelector('p').textContent = originalText;
-        fileInput.value = '';
+        await loadDocuments();
+    } else if (hasError) {
+        alert('Upload failed. Check the browser console (F12) for details.');
     }
 }
 
-function addDocument(name, chunks) {
-    if (documents.includes(name)) return;
-    documents.push(name);
-
+function addDocumentItem(doc) {
     const empty = documentList.querySelector('.empty-state');
     if (empty) empty.remove();
 
     const item = document.createElement('div');
     item.className = 'document-item';
+    item.id = 'doc-' + doc.id;
     item.innerHTML = `
         <span class="doc-icon">
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -105,10 +137,33 @@ function addDocument(name, chunks) {
                 <polyline points="14 2 14 8 20 8"/>
             </svg>
         </span>
-        <span class="doc-name">${name}</span>
-        <span class="doc-chunks">${chunks} chunks</span>
+        <span class="doc-name">${doc.fileName}</span>
+        <span class="doc-chunks">${doc.chunkCount} chunks</span>
+        <button class="doc-delete" onclick="deleteDocument('${doc.id}')" title="Delete document">
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <polyline points="3 6 5 6 21 6"/>
+                <path d="M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6m3 0V4a2 2 0 012-2h4a2 2 0 012 2v2"/>
+            </svg>
+        </button>
     `;
     documentList.appendChild(item);
+}
+
+async function deleteDocument(id) {
+    if (!confirm('Delete this document? All chunks will be removed.')) return;
+
+    const item = document.getElementById('doc-' + id);
+    if (item) item.style.opacity = '0.3';
+
+    try {
+        const res = await authFetch('/api/documents/' + id, { method: 'DELETE' });
+        if (!res.ok) throw new Error('Delete failed');
+        documents = documents.filter(d => d.id !== id);
+        await loadDocuments();
+    } catch (err) {
+        alert('Delete failed: ' + err.message);
+        if (item) item.style.opacity = '1';
+    }
 }
 
 // Messaging

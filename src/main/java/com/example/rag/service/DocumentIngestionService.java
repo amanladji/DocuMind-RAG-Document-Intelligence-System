@@ -2,6 +2,7 @@ package com.example.rag.service;
 
 import com.example.rag.api.dto.UploadResponse;
 import com.example.rag.model.DocumentChunk;
+import com.example.rag.model.StoredDocument;
 import com.example.rag.vector.VectorStore;
 import java.io.IOException;
 import java.util.ArrayList;
@@ -16,18 +17,21 @@ public class DocumentIngestionService {
     private final PdfTextExtractor pdfTextExtractor;
     private final TextChunker textChunker;
     private final VectorStore vectorStore;
+    private final DocumentRepository documentRepository;
 
     public DocumentIngestionService(
             PdfTextExtractor pdfTextExtractor,
             TextChunker textChunker,
-            VectorStore vectorStore
+            VectorStore vectorStore,
+            DocumentRepository documentRepository
     ) {
         this.pdfTextExtractor = pdfTextExtractor;
         this.textChunker = textChunker;
         this.vectorStore = vectorStore;
+        this.documentRepository = documentRepository;
     }
 
-    public UploadResponse ingest(MultipartFile file) throws IOException {
+    public UploadResponse ingest(MultipartFile file, String userId) throws IOException {
         if (file.isEmpty()) {
             throw new IllegalArgumentException("Uploaded file is empty.");
         }
@@ -52,6 +56,14 @@ public class DocumentIngestionService {
         }
 
         vectorStore.upsert(documentChunks);
+        documentRepository.save(new StoredDocument(documentId, userId, documentName, documentChunks.size()));
         return new UploadResponse(documentId, documentName, documentChunks.size());
+    }
+
+    public void deleteDocument(String userId, String documentId) {
+        var doc = documentRepository.findByUserIdAndId(userId, documentId)
+                .orElseThrow(() -> new IllegalArgumentException("Document not found"));
+        vectorStore.deleteByDocumentId(documentId);
+        documentRepository.delete(doc);
     }
 }

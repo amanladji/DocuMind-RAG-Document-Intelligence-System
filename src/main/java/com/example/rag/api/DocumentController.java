@@ -7,10 +7,12 @@ import com.example.rag.service.DocumentIngestionService;
 import com.example.rag.service.QuestionAnsweringService;
 import jakarta.validation.Valid;
 import java.io.IOException;
+import java.util.List;
 import org.springframework.core.io.ClassPathResource;
 import org.springframework.core.io.Resource;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.core.Authentication;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
@@ -33,8 +35,21 @@ public class DocumentController {
     }
 
     @PostMapping(value = "/upload", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
-    public UploadResponse upload(@RequestPart("file") MultipartFile file) throws IOException {
-        return ingestionService.ingest(file);
+    public UploadResponse upload(@RequestPart("file") MultipartFile file, Authentication auth) throws IOException {
+        return ingestionService.ingest(file, auth.getName());
+    }
+
+    @PostMapping(value = "/upload/multi", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
+    public List<UploadResponse> uploadMultiple(@RequestPart("files") List<MultipartFile> files, Authentication auth) throws IOException {
+        return files.stream()
+                .map(f -> {
+                    try {
+                        return ingestionService.ingest(f, auth.getName());
+                    } catch (IOException e) {
+                        throw new RuntimeException(e);
+                    }
+                })
+                .toList();
     }
 
     @PostMapping(value = "/ask", consumes = MediaType.APPLICATION_JSON_VALUE)

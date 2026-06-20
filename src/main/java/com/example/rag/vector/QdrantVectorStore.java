@@ -11,9 +11,13 @@ import org.springframework.http.HttpHeaders;
 import org.springframework.stereotype.Service;
 import org.springframework.web.reactive.function.client.WebClient;
 import org.springframework.web.reactive.function.client.WebClientResponseException;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 @Service
 public class QdrantVectorStore implements VectorStore {
+
+    private static final Logger log = LoggerFactory.getLogger(QdrantVectorStore.class);
 
     private final WebClient webClient;
     private final QdrantProperties properties;
@@ -35,27 +39,48 @@ public class QdrantVectorStore implements VectorStore {
 
     @PostConstruct
     public void ensureCollection() {
+        boolean exists = true;
         try {
             webClient.get()
                     .uri("/collections/{collection}", properties.collectionName())
                     .retrieve()
                     .toBodilessEntity()
                     .block();
-            return;
         } catch (WebClientResponseException.NotFound ignored) {
-            // Collection does not exist yet; create it below.
+            exists = false;
         }
 
-        CreateCollectionRequest request = new CreateCollectionRequest(
-                new VectorParams(embeddingClient.dimension(), "Cosine")
-        );
+        if (!exists) {
+            CreateCollectionRequest request = new CreateCollectionRequest(
+                    new VectorParams(embeddingClient.dimension(), "Cosine")
+            );
+            webClient.put()
+                    .uri("/collections/{collection}", properties.collectionName())
+                    .bodyValue(request)
+                    .retrieve()
+                    .toBodilessEntity()
+                    .block();
+        }
 
-        webClient.put()
-                .uri("/collections/{collection}", properties.collectionName())
-                .bodyValue(request)
-                .retrieve()
-                .toBodilessEntity()
-                .block();
+        ensurePayloadIndex("documentId", "keyword");
+    }
+
+    private void ensurePayloadIndex(String fieldName, String fieldType) {
+        try {
+            webClient.put()
+                    .uri("/collections/{collection}/index", properties.collectionName())
+                    .bodyValue(Map.of("field_name", fieldName, "field_type", fieldType))
+                    .retrieve()
+                    .toBodilessEntity()
+                    .block();
+            log.info("Created payload index on {} ({})", fieldName, fieldType);
+        } catch (WebClientResponseException e) {
+            if (e.getStatusCode().value() == 400) {
+                log.info("Payload index on {} already exists", fieldName);
+            } else {
+                log.warn("Failed to create payload index on {}: {}", fieldName, e.getMessage());
+            }
+        }
     }
 
     @Override
@@ -112,6 +137,21 @@ public class QdrantVectorStore implements VectorStore {
                         point.score()
                 ))
                 .toList();
+    }
+
+    @Override
+    public void deleteByDocumentId(String documentId) {
+        webClient.post()
+                .uri("/collections/{collection}/points/delete?wait=true", properties.collectionName())
+                .bodyValue(Map.of("filter", Map.of(
+                        "must", List.of(Map.of(
+                                "key", "documentId",
+                                "match", Map.of("value", documentId)
+                        ))
+                )))
+                .retrieve()
+                .toBodilessEntity()
+                .block();
     }
 
     private record CreateCollectionRequest(VectorParams vectors) {
