@@ -2,9 +2,13 @@ package com.example.rag.api;
 
 import com.example.rag.api.dto.AskRequest;
 import com.example.rag.api.dto.AskResponse;
+import com.example.rag.api.dto.SuggestionsResponse;
 import com.example.rag.api.dto.UploadResponse;
+import com.example.rag.model.SearchResult;
 import com.example.rag.service.DocumentIngestionService;
 import com.example.rag.service.QuestionAnsweringService;
+import com.example.rag.service.SuggestionService;
+import com.example.rag.vector.VectorStore;
 import jakarta.validation.Valid;
 import java.io.IOException;
 import java.util.List;
@@ -25,13 +29,22 @@ public class DocumentController {
 
     private final DocumentIngestionService ingestionService;
     private final QuestionAnsweringService questionAnsweringService;
+    private final SuggestionService suggestionService;
+    private final VectorStore vectorStore;
+    private final com.example.rag.config.RagProperties properties;
 
     public DocumentController(
             DocumentIngestionService ingestionService,
-            QuestionAnsweringService questionAnsweringService
+            QuestionAnsweringService questionAnsweringService,
+            SuggestionService suggestionService,
+            VectorStore vectorStore,
+            com.example.rag.config.RagProperties properties
     ) {
         this.ingestionService = ingestionService;
         this.questionAnsweringService = questionAnsweringService;
+        this.suggestionService = suggestionService;
+        this.vectorStore = vectorStore;
+        this.properties = properties;
     }
 
     @PostMapping(value = "/upload", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
@@ -55,6 +68,16 @@ public class DocumentController {
     @PostMapping(value = "/ask", consumes = MediaType.APPLICATION_JSON_VALUE)
     public AskResponse ask(@Valid @RequestBody AskRequest request) {
         return questionAnsweringService.answer(request);
+    }
+
+    @PostMapping(value = "/suggestions", consumes = MediaType.APPLICATION_JSON_VALUE)
+    public SuggestionsResponse suggestions(@Valid @RequestBody AskRequest request) {
+        int topK = request.topK() == null ? properties.defaultTopK() : request.topK();
+        List<SearchResult> results = vectorStore.search(request.question(), topK).stream()
+                .filter(r -> r.score() >= properties.minRelevanceScore())
+                .toList();
+        List<String> suggestions = suggestionService.generate(request.question(), results);
+        return new SuggestionsResponse(suggestions);
     }
 
     @GetMapping("/favicon.ico")

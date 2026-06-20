@@ -355,6 +355,9 @@ questionForm.addEventListener('submit', async (e) => {
         if (currentConversationId) {
             autoRenameConversation(question);
         }
+        fetchSuggestions(question).then(suggestions => {
+            if (suggestions.length > 0) addSuggestions(suggestions);
+        });
     } catch (err) {
         removeMessage(loadingId);
         addMessage('Error: ' + err.message, 'user');
@@ -365,6 +368,21 @@ questionForm.addEventListener('submit', async (e) => {
         saveMessagesToStorage();
     }
 });
+
+async function fetchSuggestions(question) {
+    try {
+        const res = await authFetch('/suggestions', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ question, topK: 5 })
+        });
+        if (!res.ok) return [];
+        const data = await res.json();
+        return data.suggestions || [];
+    } catch (e) {
+        return [];
+    }
+}
 
 async function autoRenameConversation(firstQuestion) {
     if (!currentConversationId) return;
@@ -458,6 +476,21 @@ function addBotMessage(answer, sources) {
     `;
     messages.appendChild(msg);
     scrollToBottom();
+}
+
+function addSuggestions(suggestions) {
+    const container = document.createElement('div');
+    container.className = 'suggestions';
+    container.innerHTML = suggestions.map(s => `
+        <button class="suggestion-chip" onclick="askSuggestion(this.textContent)">${escapeHtml(s)}</button>
+    `).join('');
+    messages.appendChild(container);
+    scrollToBottom();
+}
+
+function askSuggestion(question) {
+    questionInput.value = question;
+    questionForm.dispatchEvent(new Event('submit'));
 }
 
 function addLoadingMessage() {

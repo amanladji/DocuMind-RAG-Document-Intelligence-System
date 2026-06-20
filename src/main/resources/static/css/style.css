@@ -686,6 +686,37 @@ body {
   font-style: italic;
 }
 
+/* ───── SUGGESTIONS ───── */
+.suggestions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--spacing-8);
+  padding-left: 44px;
+  margin-top: -8px;
+  margin-bottom: var(--spacing-4);
+}
+
+.suggestion-chip {
+  background: var(--surface-paper);
+  border: 1px solid var(--color-ash-hairline);
+  border-radius: var(--radius-md);
+  padding: var(--spacing-6) var(--spacing-12);
+  font-family: var(--font-geist);
+  font-size: 13px;
+  letter-spacing: -0.2px;
+  color: var(--color-graphite-body);
+  cursor: pointer;
+  transition: all 0.2s;
+  text-align: left;
+  line-height: 1.4;
+}
+
+.suggestion-chip:hover {
+  border-color: var(--color-signal-orange);
+  color: var(--color-signal-orange);
+  background: rgba(239,111,46,0.04);
+}
+
 /* ───── INPUT AREA ───── */
 .input-area {
   padding: var(--spacing-16) var(--spacing-28) var(--spacing-24);
