@@ -19,8 +19,8 @@ const newChatBtn = document.getElementById('newChatBtn');
 
 const user = getUser();
 if (user) {
-    userName.textContent = user.name;
-    userAvatar.textContent = user.name.charAt(0).toUpperCase();
+    userName.textContent = user.name || '';
+    userAvatar.textContent = user.name ? user.name.charAt(0).toUpperCase() : '';
 }
 
 let documents = [];
@@ -29,6 +29,24 @@ let currentConversationId = null;
 
 loadDocuments();
 loadConversations();
+
+function getConversationHistory() {
+    const history = [];
+    const messageElements = messages.querySelectorAll('.message:not(.welcome)');
+    for (const el of messageElements) {
+        if (el.classList.contains('streaming')) continue;
+        const bubble = el.querySelector('.bubble');
+        if (!bubble) continue;
+        const text = bubble.textContent.trim();
+        if (!text) continue;
+        if (el.classList.contains('user')) {
+            history.push({ role: 'user', content: text });
+        } else if (el.classList.contains('bot')) {
+            history.push({ role: 'assistant', content: text });
+        }
+    }
+    return history;
+}
 
 // ───── Conversations ─────
 
@@ -39,7 +57,6 @@ async function loadConversations() {
         conversations = await res.json();
         renderConversations();
     } catch (e) {
-        // silent
     }
 }
 
@@ -97,7 +114,6 @@ async function newConversation() {
         await loadConversations();
         updateChatHeader();
     } catch (e) {
-        // silent
     }
 }
 
@@ -115,7 +131,6 @@ async function deleteConversation(id) {
         }
         await loadConversations();
     } catch (e) {
-        // silent
     }
 }
 
@@ -146,7 +161,6 @@ function saveMessagesToStorage() {
     try {
         localStorage.setItem(getStorageKey(currentConversationId), html);
     } catch (e) {
-        // quota exceeded, ignore
     }
 }
 
@@ -191,7 +205,6 @@ async function loadDocuments() {
         docs.forEach(doc => addDocumentItem(doc));
         enableChat();
     } catch (e) {
-        // silently fail
     }
 }
 
@@ -200,7 +213,6 @@ function enableChat() {
     sendBtn.disabled = false;
 }
 
-// Upload handlers
 uploadZone.addEventListener('click', () => fileInput.click());
 
 uploadZone.addEventListener('dragover', (e) => {
@@ -334,33 +346,57 @@ questionForm.addEventListener('submit', async (e) => {
     questionInput.disabled = true;
     sendBtn.disabled = true;
 
-    const loadingId = addLoadingMessage();
+    const streamingMsg = addStreamingBotMessage();
 
     try {
-        const res = await authFetch('/ask', {
+        const res = await authFetch('/ask/stream', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ question, topK: 5 })
+            body: JSON.stringify({ question, topK: 5, history: getConversationHistory() })
         });
-
-        removeMessage(loadingId);
 
         if (!res.ok) {
             const err = await res.text();
             throw new Error(err || 'Request failed');
         }
 
-        const data = await res.json();
-        addBotMessage(data.answer, data.sources);
+        const reader = res.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = '';
+
+        while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+            buffer += decoder.decode(value, { stream: true });
+            const lines = buffer.split('\n');
+            buffer = lines.pop() || '';
+            for (const line of lines) {
+                const trimmed = line.trim();
+                if (!trimmed || !trimmed.startsWith('data:')) continue;
+                const payload = trimmed.startsWith('data: ') ? trimmed.substring(6) : trimmed.substring(5);
+                if (payload === '[DONE]') continue;
+                try {
+                    const parsed = JSON.parse(payload);
+                    if (parsed.content != null) {
+                        streamingMsg.appendContent(parsed.content);
+                    }
+                    if (parsed.answer != null) {
+                        streamingMsg.appendContent(parsed.answer);
+                    }
+                    if (parsed.sources) {
+                        streamingMsg.setSources(parsed.sources);
+                    }
+                } catch (e) {
+                }
+            }
+        }
+        streamingMsg.finish();
+
         if (currentConversationId) {
             autoRenameConversation(question);
         }
-        fetchSuggestions(question).then(suggestions => {
-            if (suggestions.length > 0) addSuggestions(suggestions);
-        });
     } catch (err) {
-        removeMessage(loadingId);
-        addMessage('Error: ' + err.message, 'user');
+        streamingMsg.setError(err.message);
     } finally {
         questionInput.disabled = false;
         sendBtn.disabled = false;
@@ -368,21 +404,6 @@ questionForm.addEventListener('submit', async (e) => {
         saveMessagesToStorage();
     }
 });
-
-async function fetchSuggestions(question) {
-    try {
-        const res = await authFetch('/suggestions', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ question, topK: 5 })
-        });
-        if (!res.ok) return [];
-        const data = await res.json();
-        return data.suggestions || [];
-    } catch (e) {
-        return [];
-    }
-}
 
 async function autoRenameConversation(firstQuestion) {
     if (!currentConversationId) return;
@@ -398,7 +419,6 @@ async function autoRenameConversation(firstQuestion) {
         await loadConversations();
         updateChatHeader();
     } catch (e) {
-        // silent
     }
 }
 
@@ -478,25 +498,9 @@ function addBotMessage(answer, sources) {
     scrollToBottom();
 }
 
-function addSuggestions(suggestions) {
-    const container = document.createElement('div');
-    container.className = 'suggestions';
-    container.innerHTML = suggestions.map(s => `
-        <button class="suggestion-chip" onclick="askSuggestion(this.textContent)">${escapeHtml(s)}</button>
-    `).join('');
-    messages.appendChild(container);
-    scrollToBottom();
-}
-
-function askSuggestion(question) {
-    questionInput.value = question;
-    questionForm.dispatchEvent(new Event('submit'));
-}
-
-function addLoadingMessage() {
+function addStreamingBotMessage() {
     const msg = document.createElement('div');
-    msg.className = 'message bot';
-    msg.id = 'loading-' + Date.now();
+    msg.className = 'message bot streaming';
     msg.innerHTML = `
         <div class="avatar bot">
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -506,19 +510,51 @@ function addLoadingMessage() {
             </svg>
         </div>
         <div class="bubble">
-            <div class="thinking">
-                <span></span><span></span><span></span>
-            </div>
+            <p class="streaming-content"><span class="streaming-cursor">|</span></p>
         </div>
     `;
+    const contentP = msg.querySelector('.streaming-content');
+    const bubble = msg.querySelector('.bubble');
     messages.appendChild(msg);
     scrollToBottom();
-    return msg.id;
-}
 
-function removeMessage(id) {
-    const el = document.getElementById(id);
-    if (el) el.remove();
+    let sourcesDetails = null;
+
+    return {
+        appendContent(text) {
+            const cursor = contentP.querySelector('.streaming-cursor');
+            if (cursor) {
+                cursor.insertAdjacentText('beforebegin', text);
+            } else {
+                contentP.textContent += text;
+            }
+            scrollToBottom();
+        },
+        setSources(sources) {
+            if (sourcesDetails) return;
+            let html = `<details class="sources">
+                <summary>Sources (${sources.length})</summary>
+                ${sources.map(s => `
+                    <div class="source-item">
+                        <strong>${escapeHtml(s.documentName)}</strong> (chunk ${s.chunkIndex})
+                        <span class="source-score">relevance: ${(s.score * 100).toFixed(0)}%</span>
+                    </div>
+                `).join('')}
+            </details>`;
+            bubble.insertAdjacentHTML('beforeend', html);
+            sourcesDetails = bubble.querySelector('details');
+            scrollToBottom();
+        },
+        finish() {
+            const cursor = contentP.querySelector('.streaming-cursor');
+            if (cursor) cursor.remove();
+            msg.classList.remove('streaming');
+        },
+        setError(msgText) {
+            this.finish();
+            contentP.textContent = 'Error: ' + msgText;
+        }
+    };
 }
 
 function scrollToBottom() {

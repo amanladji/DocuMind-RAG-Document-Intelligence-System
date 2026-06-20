@@ -219,7 +219,7 @@
 
                 const data = await res.json();
                 localStorage.setItem('rag_chatbot_token', data.token);
-                localStorage.setItem('rag_chatbot_user', JSON.stringify({ email: data.email, name: data.name }));
+                localStorage.setItem('rag_chatbot_user', JSON.stringify({ email: data.email, name: data.name || '' }));
                 window.location.href = '/';
             } catch (err) {
                 errorEl.textContent = err.message;

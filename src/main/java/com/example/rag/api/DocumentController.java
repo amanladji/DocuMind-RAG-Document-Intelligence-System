@@ -2,16 +2,15 @@ package com.example.rag.api;
 
 import com.example.rag.api.dto.AskRequest;
 import com.example.rag.api.dto.AskResponse;
-import com.example.rag.api.dto.SuggestionsResponse;
 import com.example.rag.api.dto.UploadResponse;
-import com.example.rag.model.SearchResult;
 import com.example.rag.service.DocumentIngestionService;
 import com.example.rag.service.QuestionAnsweringService;
-import com.example.rag.service.SuggestionService;
-import com.example.rag.vector.VectorStore;
+import jakarta.annotation.PreDestroy;
 import jakarta.validation.Valid;
 import java.io.IOException;
 import java.util.List;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 import org.springframework.core.io.ClassPathResource;
 import org.springframework.core.io.Resource;
 import org.springframework.http.MediaType;
@@ -23,28 +22,21 @@ import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestPart;
 import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.multipart.MultipartFile;
+import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
+import reactor.core.publisher.Flux;
 
 @RestController
 public class DocumentController {
 
     private final DocumentIngestionService ingestionService;
     private final QuestionAnsweringService questionAnsweringService;
-    private final SuggestionService suggestionService;
-    private final VectorStore vectorStore;
-    private final com.example.rag.config.RagProperties properties;
 
     public DocumentController(
             DocumentIngestionService ingestionService,
-            QuestionAnsweringService questionAnsweringService,
-            SuggestionService suggestionService,
-            VectorStore vectorStore,
-            com.example.rag.config.RagProperties properties
+            QuestionAnsweringService questionAnsweringService
     ) {
         this.ingestionService = ingestionService;
         this.questionAnsweringService = questionAnsweringService;
-        this.suggestionService = suggestionService;
-        this.vectorStore = vectorStore;
-        this.properties = properties;
     }
 
     @PostMapping(value = "/upload", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
@@ -70,14 +62,58 @@ public class DocumentController {
         return questionAnsweringService.answer(request);
     }
 
-    @PostMapping(value = "/suggestions", consumes = MediaType.APPLICATION_JSON_VALUE)
-    public SuggestionsResponse suggestions(@Valid @RequestBody AskRequest request) {
-        int topK = request.topK() == null ? properties.defaultTopK() : request.topK();
-        List<SearchResult> results = vectorStore.search(request.question(), topK).stream()
-                .filter(r -> r.score() >= properties.minRelevanceScore())
-                .toList();
-        List<String> suggestions = suggestionService.generate(request.question(), results);
-        return new SuggestionsResponse(suggestions);
+    private final ExecutorService sseExecutor = Executors.newCachedThreadPool();
+
+    @PostMapping(value = "/ask/stream", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
+    public SseEmitter askStream(@Valid @RequestBody AskRequest request) {
+        SseEmitter emitter = new SseEmitter(300_000L);
+
+        sseExecutor.execute(() -> {
+            try {
+                Flux<String> stream = questionAnsweringService.answerStream(request);
+                stream.subscribe(
+                    data -> {
+                        try {
+                            emitter.send(SseEmitter.event().data(data));
+                        } catch (IOException e) {
+                            throw new RuntimeException(e);
+                        }
+                    },
+                    error -> {
+                        try {
+                            String errorJson = "{\"content\":\"[Error: " + error.getMessage() + "]\",\"sources\":null}";
+                            emitter.send(SseEmitter.event().data(errorJson));
+                            emitter.send(SseEmitter.event().data("[DONE]"));
+                            emitter.complete();
+                        } catch (IOException e) {
+                            emitter.completeWithError(e);
+                        }
+                    },
+                    () -> {
+                        try {
+                            emitter.complete();
+                        } catch (Exception e) {
+                        }
+                    }
+                );
+            } catch (Exception e) {
+                try {
+                    String errorJson = "{\"content\":\"[Error: " + e.getMessage() + "]\",\"sources\":null}";
+                    emitter.send(SseEmitter.event().data(errorJson));
+                    emitter.send(SseEmitter.event().data("[DONE]"));
+                    emitter.complete();
+                } catch (IOException ex) {
+                    emitter.completeWithError(ex);
+                }
+            }
+        });
+
+        return emitter;
+    }
+
+    @PreDestroy
+    void shutdown() {
+        sseExecutor.shutdownNow();
     }
 
     @GetMapping("/favicon.ico")

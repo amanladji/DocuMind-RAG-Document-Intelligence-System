@@ -7,12 +7,16 @@ function getToken() {
 
 function getUser() {
     const data = localStorage.getItem(USER_KEY);
-    return data ? JSON.parse(data) : null;
+    const user = data ? JSON.parse(data) : null;
+    if (user && !user.name) {
+        user.name = user.email ? user.email.split('@')[0] : '';
+    }
+    return user;
 }
 
 function setAuth(token, email, name) {
     localStorage.setItem(TOKEN_KEY, token);
-    localStorage.setItem(USER_KEY, JSON.stringify({ email, name }));
+    localStorage.setItem(USER_KEY, JSON.stringify({ email, name: name || '' }));
 }
 
 function clearAuth() {
@@ -21,7 +25,19 @@ function clearAuth() {
 }
 
 function isAuthenticated() {
-    return !!getToken();
+    const token = getToken();
+    if (!token) return false;
+    try {
+        const payload = JSON.parse(atob(token.split('.')[1].replace(/-/g, '+').replace(/_/g, '/')));
+        if (payload.exp * 1000 < Date.now()) {
+            clearAuth();
+            return false;
+        }
+        return true;
+    } catch (e) {
+        clearAuth();
+        return false;
+    }
 }
 
 function requireAuth() {
@@ -45,6 +61,7 @@ async function authFetch(url, options = {}) {
     const res = await fetch(url, { ...options, headers });
 
     if (res.status === 401 || res.status === 403) {
+        console.warn('authFetch: received', res.status, 'for', url);
         clearAuth();
         window.location.href = '/login.html';
         throw new Error('Unauthorized');

@@ -7,6 +7,9 @@ spring:
   data:
     mongodb:
       uri: ${MONGO_URI:mongodb://localhost:27017/quickbite}
+  mvc:
+    async:
+      request-timeout: 300000
   servlet:
     multipart:
       max-file-size: 25MB
@@ -27,6 +30,7 @@ rag:
 
 embedding:
   dimension: 384
+  model: text-embedding-3-small
 
 qdrant:
   base-url: ${QDRANT_URL:http://localhost:6333}

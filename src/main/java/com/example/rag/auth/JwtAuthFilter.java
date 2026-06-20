@@ -1,5 +1,6 @@
 package com.example.rag.auth;
 
+import jakarta.servlet.DispatcherType;
 import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
 import jakarta.servlet.http.HttpServletRequest;
@@ -8,10 +9,10 @@ import java.io.IOException;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.stereotype.Component;
-import org.springframework.web.filter.OncePerRequestFilter;
+import org.springframework.web.filter.GenericFilterBean;
 
 @Component
-public class JwtAuthFilter extends OncePerRequestFilter {
+public class JwtAuthFilter extends GenericFilterBean {
 
     private final JwtUtil jwtUtil;
 
@@ -20,21 +21,35 @@ public class JwtAuthFilter extends OncePerRequestFilter {
     }
 
     @Override
-    protected void doFilterInternal(HttpServletRequest request, HttpServletResponse response, FilterChain chain)
+    public void doFilter(jakarta.servlet.ServletRequest request, jakarta.servlet.ServletResponse response, FilterChain chain)
             throws ServletException, IOException {
 
-        String authHeader = request.getHeader("Authorization");
+        HttpServletRequest httpRequest = (HttpServletRequest) request;
 
-        if (authHeader != null && authHeader.startsWith("Bearer ")) {
-            String token = authHeader.substring(7);
-
-            if (jwtUtil.validateToken(token)) {
-                String email = jwtUtil.getEmailFromToken(token);
-                var auth = new UsernamePasswordAuthenticationToken(email, null, java.util.List.of());
-                SecurityContextHolder.getContext().setAuthentication(auth);
-            }
+        if (httpRequest.getDispatcherType() != DispatcherType.REQUEST
+                && httpRequest.getDispatcherType() != DispatcherType.ASYNC) {
+            chain.doFilter(request, response);
+            return;
         }
 
-        chain.doFilter(request, response);
+        try {
+            String authHeader = httpRequest.getHeader("Authorization");
+
+            if (authHeader != null && authHeader.startsWith("Bearer ")) {
+                String token = authHeader.substring(7);
+
+                if (jwtUtil.validateToken(token)) {
+                    String email = jwtUtil.getEmailFromToken(token);
+                    var auth = new UsernamePasswordAuthenticationToken(email, null, java.util.List.of());
+                    SecurityContextHolder.getContext().setAuthentication(auth);
+                }
+            }
+
+            chain.doFilter(request, response);
+        } finally {
+            if (httpRequest.getDispatcherType() == DispatcherType.ASYNC) {
+                SecurityContextHolder.clearContext();
+            }
+        }
     }
 }
