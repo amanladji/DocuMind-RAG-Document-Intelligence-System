@@ -55,7 +55,7 @@ public class DocumentIngestionService {
             ));
         }
 
-        vectorStore.upsert(documentChunks);
+        vectorStore.upsert(documentChunks, userId);
         documentRepository.save(new StoredDocument(documentId, userId, documentName, documentChunks.size()));
         return new UploadResponse(documentId, documentName, documentChunks.size());
     }
@@ -63,7 +63,7 @@ public class DocumentIngestionService {
     public void deleteDocument(String userId, String documentId) {
         var doc = documentRepository.findByUserIdAndId(userId, documentId)
                 .orElseThrow(() -> new IllegalArgumentException("Document not found"));
-        vectorStore.deleteByDocumentId(documentId);
+        vectorStore.deleteByDocumentId(documentId, userId);
         documentRepository.delete(doc);
     }
 }

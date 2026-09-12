@@ -35,10 +35,8 @@ embedding:
   dimension: 384
   model: text-embedding-3-small
 
-qdrant:
-  base-url: ${QDRANT_URL:http://localhost:6333}
-  collection-name: document_chunks
-  api-key: ${QDRANT_API_KEY:}
+vector:
+  file-path: ${VECTOR_FILE_PATH:/data/vectors.json}
 
 openrouter:
   base-url: https://openrouter.ai/api/v1

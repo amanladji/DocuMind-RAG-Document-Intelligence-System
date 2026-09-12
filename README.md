@@ -1,274 +1,149 @@
-# Spring Boot RAG Document Q&A System
+# DocuMind — RAG Document Q&A System
 
-A production-style **Retrieval-Augmented Generation (RAG)** based Document Q&A system built with **Java 21**, **Spring Boot**, **Apache PDFBox**, **Qdrant**, and **OpenRouter API**.
+A portfolio-style **Retrieval-Augmented Generation (RAG)** Document Q&A system built with **Java 17**, **Spring Boot 3.3.5**, **Apache PDFBox**, **FileVectorStore (Java cosine similarity)**, **MongoDB Atlas**, and **OpenRouter API**, hosted on **Render Free**.
 
-This project allows users to upload PDF documents, convert them into searchable vector embeddings, and ask natural language questions. The system retrieves relevant document chunks and sends only that context to an LLM, helping generate answers that are grounded in the uploaded documents.
+Users upload PDFs, the system chunks/embeds them, stores vectors in a file (`/data/vectors.json` on Render, `./data/vectors.json` locally), and answers natural language questions with grounded citations via `openai/gpt-4o-mini`.
+
+This is intentionally a **portfolio/showcase project for interviews**, not a production-scale vector database deployment. The file-based vector store is a deliberate choice for simple, expiry-free hosting on Render Free.
 
 ---
 
 ## Overview
 
-This application demonstrates how to build a backend RAG system for document-based question answering.
-
 Users can:
 
-- Upload PDF documents
-- Extract text from PDFs
-- Split text into smaller chunks
-- Generate embeddings for each chunk
-- Store embeddings in Qdrant vector database
-- Ask questions in natural language
-- Retrieve relevant chunks using semantic search
-- Send retrieved context and question to OpenRouter LLM
-- Receive concise, document-grounded answers
+- Sign up / log in (JWT authentication, BCrypt passwords)
+- Upload PDF documents (validated, 25MB limit)
+- Extract text (PDFBox) → split into chunks (900 chars, 150 overlap) → embed (`text-embedding-3-small`, 384d) → store in `FileVectorStore`
+- Ask questions (topK retrieval, min relevance 0.15, max context 7000 chars, last 6 history messages)
+- Get grounded answers with source citations (or `I don't know based on the provided documents.`)
+- Stream answers via `/ask/stream` (SSE)
+- Manage documents and conversations (list/delete/rename)
 
-The system is designed to reduce hallucination by forcing the LLM to answer only from retrieved document context.
+The system forces the LLM to answer **only** from retrieved context to reduce hallucination.
 
 ---
 
 ## Architecture Flow
 
 ```text
-User uploads PDF
+User Browser (static HTML/JS)
+        |
+        v
+Render Free (or localhost:8080)
         |
         v
 Spring Boot REST API
         |
-        v
-Apache PDFBox extracts text
+        +---- MongoDB Atlas
+        |       +-- users
+        |       +-- documents
+        |       +-- conversations
         |
-        v
-Text is split into chunks
+        +---- FileVectorStore
+        |       +-- /data/vectors.json  (Render) / ./data/vectors.json (local)
+        |       +-- cosine similarity in Java
+        |       +-- userId-filtered search
         |
-        v
-Embeddings are generated
-        |
-        v
-Embeddings + metadata are stored in Qdrant
-        |
-        v
-User asks a question
-        |
-        v
-Question is converted into an embedding
-        |
-        v
-Qdrant performs semantic search
-        |
-        v
-Relevant chunks are retrieved
-        |
-        v
-Prompt is built with context + question
-        |
-        v
-OpenRouter LLM generates grounded answer
-        |
-        v
-Answer is returned to user
+        +---- OpenRouter
+                +-- text embeddings (text-embedding-3-small, 384d)
+                +-- GPT-4o-mini (temperature 0.1)
+```
+
+**Ingestion:**
+
+```text
+PDF → PdfTextExtractor → TextChunker → OpenRouterEmbeddingClient → FileVectorStore → vectors.json
+                                                              → StoredDocument (MongoDB)
+```
+
+**Query:**
+
+```text
+Question → OpenRouterEmbeddingClient → FileVectorStore.search() → cosine similarity → topK → PromptBuilder → OpenRouter GPT-4o-mini → Answer + Sources
 ```
 
 ---
 
 ## Tech Stack
 
-| Technology | Purpose |
-|---|---|
-| Java 21 | Backend programming language |
-| Spring Boot | REST API and application framework |
-| Apache PDFBox | PDF text extraction |
-| Qdrant | Vector database for semantic search |
-| OpenRouter API | LLM provider for answer generation |
-| Docker | Running Qdrant locally |
-| Maven | Build and dependency management |
+| Technology | Purpose | Version/Details |
+|---|---|---|
+| Java 17 | Backend language | `pom.xml` + `system.properties` |
+| Spring Boot 3.3.5 | REST API, Security, Data MongoDB | starter-web, webflux, validation, actuator |
+| Spring Security + JJWT 0.12.6 | JWT auth, BCrypt, stateless sessions | `SecurityConfig`, `JwtUtil` |
+| Apache PDFBox 3.0.3 | PDF text extraction | `PdfTextExtractor` |
+| FileVectorStore | Vector storage, Java cosine similarity | `vector/FileVectorStore.java`, file `vectors.json` |
+| MongoDB Atlas | Persistent app data (users, docs, conversations) | `StoredDocument`, `Conversation`, `User` |
+| OpenRouter API | Embeddings + LLM (`openai/gpt-4o-mini`) | `OpenRouterChatClient`, `OpenRouterEmbeddingClient` |
+| Render Free | Hosting | `render.yaml`, `$PORT`, `VECTOR_FILE_PATH` |
+| Maven | Build | `spring-boot-maven-plugin` |
 
 ---
 
 ## Project Structure
 
 ```text
-springboot-rag-chatbot/
-|
-├── docker-compose.yml
+rag-project/
+├── render.yaml
 ├── pom.xml
+├── system.properties
 ├── README.md
-|
 ├── src/
-|   ├── main/
-|   |   ├── java/
-|   |   |   └── com/example/rag/
-|   |   |       ├── api/
-|   |   |       |   ├── DocumentController.java
-|   |   |       |   ├── GlobalExceptionHandler.java
-|   |   |       |   └── dto/
-|   |   |       |       ├── AskRequest.java
-|   |   |       |       ├── AskResponse.java
-|   |   |       |       └── UploadResponse.java
-|   |   |       |
-|   |   |       ├── config/
-|   |   |       |   ├── EmbeddingProperties.java
-|   |   |       |   ├── OpenRouterProperties.java
-|   |   |       |   ├── QdrantProperties.java
-|   |   |       |   └── RagProperties.java
-|   |   |       |
-|   |   |       ├── llm/
-|   |   |       |   ├── ChatClient.java
-|   |   |       |   └── OpenRouterChatClient.java
-|   |   |       |
-|   |   |       ├── model/
-|   |   |       |   ├── DocumentChunk.java
-|   |   |       |   └── SearchResult.java
-|   |   |       |
-|   |   |       ├── service/
-|   |   |       |   ├── DocumentIngestionService.java
-|   |   |       |   ├── EmbeddingClient.java
-|   |   |       |   ├── HashingEmbeddingClient.java
-|   |   |       |   ├── PdfTextExtractor.java
-|   |   |       |   ├── PromptBuilder.java
-|   |   |       |   ├── QuestionAnsweringService.java
-|   |   |       |   └── TextChunker.java
-|   |   |       |
-|   |   |       ├── vector/
-|   |   |       |   ├── QdrantVectorStore.java
-|   |   |       |   └── VectorStore.java
-|   |   |       |
-|   |   |       └── RagChatbotApplication.java
-|   |   |
-|   |   └── resources/
-|   |       └── application.yml
-|   |
-|   └── test/
-|       └── java/
-|           └── com/example/rag/
+│   ├── main/
+│   │   ├── java/com/example/rag/
+│   │   │   ├── api/  DocumentController, ConversationController, DocumentManagementController, dto/*
+│   │   │   ├── auth/  AuthController, AuthService, JwtUtil, JwtAuthFilter, User
+│   │   │   ├── config/  VectorStoreProperties, EmbeddingProperties, OpenRouterProperties, RagProperties, SecurityConfig, HttpClientConfig
+│   │   │   ├── llm/  ChatClient, OpenRouterChatClient
+│   │   │   ├── model/  DocumentChunk, SearchResult, StoredDocument, Conversation
+│   │   │   ├── service/  DocumentIngestionService, QuestionAnsweringService, TextChunker, PdfTextExtractor, PromptBuilder, OpenRouterEmbeddingClient
+│   │   │   ├── vector/  VectorStore (interface), FileVectorStore
+│   │   │   └── RagChatbotApplication.java
+│   │   └── resources/
+│   │       ├── application.yml
+│   │       └── static/  index.html, login.html, signup.html, css/style.css, js/app.js, js/auth.js
+│   └── test/
+└── target/
 ```
 
 ---
 
 ## RAG Pipeline Explained
 
-### 1. PDF Upload
+1. **PDF Upload** — `POST /upload` validates `.pdf` suffix and non-empty.
+2. **Text Extraction** — PDFBox `Loader.loadPDF` + `PDFTextStripper` + normalize.
+3. **Chunking** — `TextChunker` splits on `\n\s*\n` paragraphs, packs to `chunk-size 900` with `chunk-overlap 150`.
+4. **Embeddings** — Each chunk → `POST https://openrouter.ai/api/v1/embeddings` (`text-embedding-3-small`, 384 dims).
+5. **File Storage** — `FileVectorStore` appends `StoredVector{id, userId, documentId, documentName, chunkIndex, text, embedding}` to in-memory list and atomically persists to `vectors.json` (`ReadWriteLock`, temp file + atomic move). Directory created on startup.
+6. **Question Embedding** — Same embedding model for the query.
+7. **Cosine Search** — Filter by `userId`, compute cosine similarity, sort descending, take `topK` (default 5, max 20), filter by `min-relevance-score 0.15`.
+8. **Prompt** — `PromptBuilder` concatenates context up to `max-context-chars 7000` + last 6 history messages, instructs LLM to answer only from context.
+9. **LLM** — `POST /chat/completions` to OpenRouter (`gpt-4o-mini`, `temperature 0.1`), non-stream or SSE stream.
+10. **Grounded Response** — Returns answer + `SourceChunk[]`; if no relevant chunks → `I don't know based on the provided documents.`
 
-The user uploads a PDF file using the `/upload` API. The backend receives the file and validates that it is a supported PDF document.
-
-### 2. Text Extraction
-
-Apache PDFBox reads the PDF and extracts plain text. This converts the document into a format that can be processed by the RAG pipeline.
-
-### 3. Text Chunking
-
-Large documents are split into smaller chunks. Chunking is important because LLMs and embedding models work better with focused pieces of text instead of very large documents.
-
-### 4. Embedding Generation
-
-Each text chunk is converted into a numerical vector called an embedding. Embeddings represent the meaning of the text and allow semantic search.
-
-### 5. Vector Storage in Qdrant
-
-The generated embeddings are stored in Qdrant along with metadata such as:
-
-- Document ID
-- Document name
-- Chunk index
-- Original chunk text
-
-### 6. Question Processing
-
-When a user asks a question, the question is also converted into an embedding.
-
-### 7. Semantic Search
-
-Qdrant compares the question embedding with stored document embeddings and returns the most relevant chunks.
-
-### 8. Prompt Building
-
-The system builds a prompt using:
-
-- Retrieved document chunks
-- User question
-- Strict instructions to answer only from the provided context
-
-### 9. LLM Answer Generation
-
-The prompt is sent to OpenRouter API. The configured LLM generates a final answer based only on the retrieved document context.
-
-### 10. Grounded Response
-
-If the retrieved context is not enough, the system returns:
-
-```text
-I don't know based on the provided documents.
-```
+User isolation: a user only retrieves their own vectors (fixed vs the old Qdrant global search).
 
 ---
 
 ## API Endpoints
 
-### Upload PDF
+All except `/api/auth/**`, static assets, `/actuator/health`, `/swagger-ui/**` require `Authorization: Bearer <JWT>`.
 
-```http
-POST /upload
-```
-
-Uploads a PDF document, extracts text, chunks it, generates embeddings, and stores them in Qdrant.
-
-#### Request
-
-```http
-Content-Type: multipart/form-data
-```
-
-| Field | Type | Required | Description |
+| Method | Path | Auth | Description |
 |---|---|---|---|
-| file | PDF | Yes | PDF document to upload |
-
-#### Example Response
-
-```json
-{
-  "documentId": "7f0e7c5a-9a41-4f1e-8b0a-123456789abc",
-  "fileName": "sample.pdf",
-  "chunksStored": 18
-}
-```
-
-### Ask Question
-
-```http
-POST /ask
-```
-
-Accepts a natural language question, retrieves relevant chunks from Qdrant, sends context to OpenRouter, and returns a grounded answer.
-
-#### Request
-
-```http
-Content-Type: application/json
-```
-
-#### Example Request
-
-```json
-{
-  "question": "What is the main topic of this document?",
-  "topK": 5
-}
-```
-
-#### Example Response
-
-```json
-{
-  "answer": "The document mainly discusses retrieval-augmented generation and how it improves question answering using external document context.",
-  "sources": [
-    {
-      "documentName": "sample.pdf",
-      "chunkIndex": 2,
-      "score": 0.82,
-      "text": "Retrieval-augmented generation combines semantic search with language models..."
-    }
-  ]
-}
-```
+| POST | `/api/auth/signup` | No | `{email, name, password(min6)}` → `{token, email, name}` 201 |
+| POST | `/api/auth/login` | No | `{email, password}` → `{token, email, name}` |
+| POST | `/upload` | JWT | `multipart file` (PDF) → `{documentId, fileName, chunksStored}` |
+| POST | `/upload/multi` | JWT | Multiple PDFs → `List<UploadResponse>` |
+| POST | `/ask` | JWT | `{question, topK(1-20), history}` → `{answer, sources}` |
+| POST | `/ask/stream` | JWT | Same as `/ask` but `text/event-stream` with `{"content":...}` + `{"sources":...}` + `[DONE]` |
+| GET | `/api/documents` | JWT | List own `StoredDocument[]` |
+| DELETE | `/api/documents/{documentId}` | JWT | Delete doc + its vectors |
+| GET/POST/PATCH/DELETE | `/api/conversations` | JWT | Conversation CRUD (title, updatedAt) |
+| GET | `/, /login.html, /signup.html, /css/**, /js/**` | No | Frontend |
+| GET | `/actuator/health` | No | `{"status":"UP"}` |
+| GET | `/swagger-ui/index.html` | No | OpenAPI docs |
 
 ---
 
@@ -276,209 +151,129 @@ Content-Type: application/json
 
 ### Prerequisites
 
-Make sure you have the following installed:
-
-- Java 21
-- Maven
-- Docker
+- Java 17
+- Maven 3.9+
+- MongoDB Atlas URI
 - OpenRouter API key
 
-### 1. Clone the Repository
+### 1. Clone
 
 ```bash
-git clone https://github.com/your-username/springboot-rag-chatbot.git
-cd springboot-rag-chatbot
+git clone https://github.com/madaranaruto909-crypto/rag-project.git
+cd rag-project
 ```
 
-### 2. Start Qdrant with Docker
+### 2. Configure Environment Variables
 
-```bash
-docker compose up -d
-```
-
-Qdrant will run at:
+Create `.env` (gitignored) or export:
 
 ```text
-http://localhost:6333
+MONGO_URI=mongodb+srv://user:pass@cluster0.xxxxx.mongodb.net/quickbite?retryWrites=true&w=majority&appName=Cluster0
+OPENROUTER_API_KEY=sk-or-v1-...
+JWT_SECRET=your-48-char-secret
+VECTOR_FILE_PATH=./data/vectors.json   # local; Render uses /data/vectors.json
 ```
 
-### 3. Configure Environment Variables
+On Render these are set in Dashboard → Environment.
 
-Set your OpenRouter API key:
-
-#### Windows PowerShell
-
-```powershell
-$env:OPENROUTER_API_KEY="your-openrouter-api-key"
-```
-
-#### macOS/Linux
-
-```bash
-export OPENROUTER_API_KEY="your-openrouter-api-key"
-```
-
-### 4. Configure Application
-
-Update `src/main/resources/application.yml` if needed:
+`application.yml` relevant defaults:
 
 ```yaml
-openrouter:
-  base-url: https://openrouter.ai/api/v1
-  api-key: ${OPENROUTER_API_KEY}
-  model: openai/gpt-4o-mini
-
-qdrant:
-  base-url: http://localhost:6333
-  collection-name: document_chunks
-
+vector:
+  file-path: ${VECTOR_FILE_PATH:/data/vectors.json}
 rag:
+  chunk-size: 900
+  chunk-overlap: 150
   default-top-k: 5
   max-context-chars: 7000
   min-relevance-score: 0.15
-```
-
-The LLM model can be changed without modifying business logic.
-
-Examples:
-
-```yaml
+embedding:
+  dimension: 384
+  model: text-embedding-3-small
 openrouter:
-  model: openai/gpt-4o
+  model: openai/gpt-4o-mini
+  temperature: 0.1
 ```
 
-```yaml
-openrouter:
-  model: anthropic/claude-3.5-sonnet
-```
-
-```yaml
-openrouter:
-  model: mistralai/mistral-large
-```
-
-### 5. Run the Application
+### 3. Run Locally
 
 ```bash
 mvn spring-boot:run
+# or
+mvn -DskipTests package && java -jar target/*.jar
 ```
 
-The application will start at:
+App starts at `http://localhost:8080` (or `$PORT`). First run creates `./data/vectors.json` automatically.
 
-```text
-http://localhost:8080
-```
+Swagger: `http://localhost:8080/swagger-ui/index.html`
 
-Swagger UI is available at:
+### 4. Test
 
-```text
-http://localhost:8080/swagger-ui/index.html
+Signup → Login → Upload PDF → Ask:
+
+```bash
+# Signup
+curl -X POST http://localhost:8080/api/auth/signup -H "Content-Type: application/json" -d '{"email":"a@b.com","name":"Alice","password":"secret123"}'
+# Login
+TOKEN=$(curl -s -X POST http://localhost:8080/api/auth/login -H "Content-Type: application/json" -d '{"email":"a@b.com","password":"secret123"}' | jq -r .token)
+# Upload (Windows)
+curl.exe -X POST http://localhost:8080/upload -H "Authorization: Bearer $TOKEN" -F "file=@sample.pdf"
+# Ask
+curl -X POST http://localhost:8080/ask -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" -d '{"question":"What is the main topic?","topK":5}'
 ```
 
 ---
 
-## Example Usage
+## Deploy to Render Free
 
-### Upload a PDF
+1. Push to GitHub (`madaranaruto909-crypto/rag-project`).
+2. Render Dashboard → **New + → Blueprint** → Connect repo (uses `render.yaml`) **or** **New Web Service → Connect repo** with settings:
+   - Build: `mvn -DskipTests package`
+   - Start: `java -jar target/*.jar`
+   - Environment: `Java 17`
+3. Add **Environment Variables**:
+   ```
+   MONGO_URI=mongodb+srv://...
+   OPENROUTER_API_KEY=sk-or-v1-...
+   JWT_SECRET=4gk8J2LmP9sX7aR1dN5qT8wY3uH6zC0vB2eF9mK4pL7rS1xD
+   VECTOR_FILE_PATH=/data/vectors.json
+   ```
+   (`PORT` is auto-injected by Render, no need to set)
+4. Deploy → check logs for `Loaded 0 vectors from /data/vectors.json` and `Tomcat started on port ...`.
+5. Use the generated `https://rag-documind.onrender.com` URL. Generate domain if using Blueprint.
 
-```bash
-curl -X POST http://localhost:8080/upload \
-  -F "file=@sample.pdf"
-```
-
-Windows PowerShell:
-
-```powershell
-curl.exe -X POST http://localhost:8080/upload `
-  -F "file=@C:\path\sample.pdf"
-```
-
-### Ask a Question
-
-```bash
-curl -X POST http://localhost:8080/ask \
-  -H "Content-Type: application/json" \
-  -d '{
-    "question": "Summarize the key points from the document.",
-    "topK": 5
-  }'
-```
-
-Windows PowerShell:
-
-```powershell
-curl.exe -X POST http://localhost:8080/ask `
-  -H "Content-Type: application/json" `
-  -d "{\"question\":\"Summarize the key points from the document.\",\"topK\":5}"
-```
+**Note:** Render Free filesystem is **ephemeral**. If the service restarts/redeploys, `/data/vectors.json` is lost and you must re-upload PDFs. MongoDB Atlas data (users, documents, conversations) persists.
 
 ---
 
 ## Why This Project Matters
 
-This project demonstrates core skills used in modern AI backend systems:
+- REST + JWT + MongoDB with Spring Boot
+- PDF processing + chunking design
+- File-based vector store with cosine similarity and user isolation
+- RAG prompt engineering and grounded answers
+- Streaming SSE
+- Clean `VectorStore` abstraction
 
-- Building REST APIs with Spring Boot
-- Processing documents with Java
-- Designing a RAG pipeline
-- Using vector databases for semantic search
-- Integrating with LLM APIs
-- Preventing hallucination through grounded context
-- Separating responsibilities with clean architecture
-- Designing systems that can be extended for production use
-
-It is suitable as a foundation for:
-
-- Document search systems
-- Internal knowledge base assistants
-- Legal document Q&A
-- HR policy assistants
-- Research paper Q&A tools
-- Customer support knowledge assistants
+Suitable for: document search, knowledge base assistants, interview showcase.
 
 ---
 
-## Future Improvements
+## Limitations (Intentional for Portfolio)
 
-- Replace local embedding logic with a production embedding model
-- Add authentication and authorization
-- Store document metadata in PostgreSQL
-- Add document delete and re-index APIs
-- Add support for DOCX, TXT, and HTML files
-- Add async document ingestion using message queues
-- Add reranking for better retrieval quality
-- Add streaming responses from OpenRouter
-- Add user-specific document collections
-- Add observability with logs, metrics, and tracing
-- Add integration tests with Testcontainers
-- Add Dockerfile for the Spring Boot application
-- Deploy using Kubernetes or cloud platforms
+- File-based vectors, not a production vector DB — all vectors loaded in memory, linear scan.
+- No persistent disk on Render Free — vectors lost on restart.
+- 384d truncated embeddings (OpenRouter `dimensions` param).
+- Single-node, no horizontal scaling for vectors.
 
----
-
-## Production Considerations
-
-For a production deployment, consider adding:
-
-- API authentication
-- Rate limiting
-- Request validation
-- File size limits
-- Virus scanning for uploaded files
-- Retry and timeout handling for external APIs
-- Centralized logging
-- Monitoring and alerting
-- Secure secret management
-- Backup strategy for Qdrant data
+For production consider: Qdrant/Weaviate/pgvector, persistent volumes, sharding, reranking, async ingestion.
 
 ---
 
 ## License
 
-This project is intended for learning, experimentation, and portfolio use.
-
----
+For learning, experimentation, and portfolio use.
 
 ## Author
 
-Built as a production-style Spring Boot RAG backend project for document-based question answering.
+Built as a RAG showcase for interviews — Spring Boot + FileVectorStore + MongoDB Atlas + OpenRouter + Render.

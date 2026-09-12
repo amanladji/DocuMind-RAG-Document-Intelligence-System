@@ -4,3 +4,4 @@ target/
 *.iml
 .env
 application-local.yml
+data/

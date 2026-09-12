@@ -15,7 +15,7 @@
     <artifactId>springboot-rag-chatbot</artifactId>
     <version>0.0.1-SNAPSHOT</version>
     <name>springboot-rag-chatbot</name>
-    <description>Production-style RAG Document Q&amp;A system with Spring Boot, Qdrant, PDFBox, and OpenRouter.</description>
+    <description>Portfolio RAG Document Q&amp;A system with Spring Boot, FileVectorStore, PDFBox, and OpenRouter. Hosted on Render Free.</description>
 
     <properties>
         <java.version>17</java.version>

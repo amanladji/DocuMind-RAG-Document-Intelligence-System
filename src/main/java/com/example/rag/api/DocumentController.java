@@ -58,19 +58,20 @@ public class DocumentController {
     }
 
     @PostMapping(value = "/ask", consumes = MediaType.APPLICATION_JSON_VALUE)
-    public AskResponse ask(@Valid @RequestBody AskRequest request) {
-        return questionAnsweringService.answer(request);
+    public AskResponse ask(@Valid @RequestBody AskRequest request, Authentication auth) {
+        return questionAnsweringService.answer(request, auth.getName());
     }
 
     private final ExecutorService sseExecutor = Executors.newCachedThreadPool();
 
     @PostMapping(value = "/ask/stream", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
-    public SseEmitter askStream(@Valid @RequestBody AskRequest request) {
+    public SseEmitter askStream(@Valid @RequestBody AskRequest request, Authentication auth) {
+        String userId = auth.getName();
         SseEmitter emitter = new SseEmitter(300_000L);
 
         sseExecutor.execute(() -> {
             try {
-                Flux<String> stream = questionAnsweringService.answerStream(request);
+                Flux<String> stream = questionAnsweringService.answerStream(request, userId);
                 stream.subscribe(
                     data -> {
                         try {
