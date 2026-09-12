@@ -1,10 +1,9 @@
 services:
   - type: web
     name: rag-documind
-    env: java
+    env: docker
     plan: free
-    buildCommand: mvn -DskipTests package
-    startCommand: java -jar target/*.jar
+    dockerfilePath: ./Dockerfile
     envVars:
       - key: MONGO_URI
         sync: false
